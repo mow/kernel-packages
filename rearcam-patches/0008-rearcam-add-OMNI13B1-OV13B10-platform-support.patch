@@ -1,0 +1,190 @@
+From 33ec482e55e1c6b5893b59cac4e0eeea8e49008d Mon Sep 17 00:00:00 2001
+From: Rearcam Build <rearcam@local>
+Date: Tue, 19 May 2026 03:47:29 +0000
+Subject: [PATCH 08/10] rearcam: add OMNI13B1 OV13B10 platform support
+
+---
+ drivers/gpu/drm/amd/amdgpu/amdgpu_acpi.c |  1 +
+ drivers/gpu/drm/amd/amdgpu/isp_v4_1_1.c  | 19 ++++--
+ drivers/platform/x86/amd/amd_isp4.c      | 83 ++++++++++++++++++++++++
+ 3 files changed, 99 insertions(+), 4 deletions(-)
+
+diff --git a/drivers/gpu/drm/amd/amdgpu/amdgpu_acpi.c b/drivers/gpu/drm/amd/amdgpu/amdgpu_acpi.c
+index 7c9d8a6d0..c15485168 100644
+--- a/drivers/gpu/drm/amd/amdgpu/amdgpu_acpi.c
++++ b/drivers/gpu/drm/amd/amdgpu/amdgpu_acpi.c
+@@ -1538,6 +1538,7 @@ bool amdgpu_acpi_is_s0ix_active(struct amdgpu_device *adev)
+ #if IS_ENABLED(CONFIG_DRM_AMD_ISP)
+ static const struct acpi_device_id isp_sensor_ids[] = {
+ 	{ "OMNI5C10" },
++	{ "OMNI13B1" },
+ 	{ }
+ };
+ 
+diff --git a/drivers/gpu/drm/amd/amdgpu/isp_v4_1_1.c b/drivers/gpu/drm/amd/amdgpu/isp_v4_1_1.c
+index 0002bcc6c..ccb6108c0 100644
+--- a/drivers/gpu/drm/amd/amdgpu/isp_v4_1_1.c
++++ b/drivers/gpu/drm/amd/amdgpu/isp_v4_1_1.c
+@@ -57,12 +57,20 @@ static struct gpiod_lookup_table isp_gpio_table = {
+ 	},
+ };
+ 
+-static struct gpiod_lookup_table isp_sensor_gpio_table = {
++static struct gpiod_lookup_table isp_ov05c10_gpio_table = {
+ 	.dev_id = "i2c-ov05c10",
+ 	.table = {
+ 		GPIO_LOOKUP("amdisp-pinctrl", 0, "enable", GPIO_ACTIVE_HIGH),
+ 		{ }
+-	},
++	}
++};
++
++static struct gpiod_lookup_table isp_ov13b10_gpio_table = {
++	.dev_id = "i2c-ov13b10",
++	.table = {
++		GPIO_LOOKUP("amdisp-pinctrl", 0, "enable", GPIO_ACTIVE_HIGH),
++		{ }
++	}
+ };
+ 
+ static int isp_poweroff(struct generic_pm_domain *genpd)
+@@ -240,10 +248,13 @@ static int isp_v4_1_1_hw_init(struct amdgpu_isp *isp)
+ 		return 0;
+ 	}
+ 
+-	/* add GPIO resources required for OMNI5C10 sensor */
++	/* add GPIO resources required for known ISP sensors */
+ 	if (!strcmp("OMNI5C10", acpi_device_hid(acpi_dev))) {
+ 		gpiod_add_lookup_table(&isp_gpio_table);
+-		gpiod_add_lookup_table(&isp_sensor_gpio_table);
++		gpiod_add_lookup_table(&isp_ov05c10_gpio_table);
++	} else if (!strcmp("OMNI13B1", acpi_device_hid(acpi_dev))) {
++		gpiod_add_lookup_table(&isp_gpio_table);
++		gpiod_add_lookup_table(&isp_ov13b10_gpio_table);
+ 	}
+ 
+ 	isp_base = adev->rmmio_base;
+diff --git a/drivers/platform/x86/amd/amd_isp4.c b/drivers/platform/x86/amd/amd_isp4.c
+index 0d4948995..c84e080de 100644
+--- a/drivers/platform/x86/amd/amd_isp4.c
++++ b/drivers/platform/x86/amd/amd_isp4.c
+@@ -19,10 +19,14 @@
+ #define AMDISP_OV05C10_I2C_ADDR		0x10
+ #define AMDISP_OV05C10_HID		"OMNI5C10"
+ #define AMDISP_OV05C10_REMOTE_EP_NAME	"ov05c10_isp_4_1_1"
++#define AMDISP_OV13B10_I2C_ADDR		0x10
++#define AMDISP_OV13B10_HID		"OMNI13B1"
++#define AMDISP_OV13B10_REMOTE_EP_NAME	"ov13b10_isp_4_1_1"
+ #define AMD_ISP_PLAT_DRV_NAME		"amd-isp4"
+ 
+ static const struct software_node isp4_mipi1_endpoint_node;
+ static const struct software_node ov05c10_endpoint_node;
++static const struct software_node ov13b10_endpoint_node;
+ 
+ /*
+  * AMD ISP platform info definition to initialize sensor
+@@ -85,6 +89,7 @@ static const struct software_node isp4_port_node = {
+  */
+ static const struct software_node_ref_args isp4_refs[] = {
+ 	SOFTWARE_NODE_REFERENCE(&ov05c10_endpoint_node),
++	SOFTWARE_NODE_REFERENCE(&ov13b10_endpoint_node),
+ };
+ 
+ /* ISP4 MIPI1 endpoint node properties table */
+@@ -182,6 +187,75 @@ static const struct software_node ov05c10_endpoint_node = {
+ 	.properties = ov05c10_endpoint_props,
+ };
+ 
++/* I2C1 OV13B10 camera node property table */
++static const struct property_entry ov13b10_camera_props[] = {
++	PROPERTY_ENTRY_U32("clock-frequency", 19200 * HZ_PER_KHZ),
++	{ }
++};
++
++/* OV13B10 camera node definition */
++static const struct software_node ov13b10_camera_node = {
++	.name = AMDISP_OV13B10_HID,
++	.parent = &i2c1_node,
++	.properties = ov13b10_camera_props,
++};
++
++/*
++ * OV13B10 Ports node definition. No properties defined for
++ * ports node for OV13B10.
++ */
++static const struct software_node ov13b10_ports = {
++	.name = "ports",
++	.parent = &ov13b10_camera_node,
++};
++
++/*
++ * OV13B10 Port node definition.
++ */
++static const struct software_node ov13b10_port_node = {
++	.name = "port@0",
++	.parent = &ov13b10_ports,
++};
++
++/*
++ * OV13B10 remote endpoint points to ISP4 MIPI1 endpoint
++ * node.
++ */
++static const struct software_node_ref_args ov13b10_refs[] = {
++	SOFTWARE_NODE_REFERENCE(&isp4_mipi1_endpoint_node),
++};
++
++/* OV13B10 supports one single link frequency */
++static const u64 ov13b10_link_freqs[] = {
++	560 * HZ_PER_MHZ,
++};
++
++/* OV13B10 supports 4-lane configuration */
++static const u32 ov13b10_data_lanes[] = {
++	1,
++	2,
++	3,
++	4,
++};
++
++/* OV13B10 endpoint node properties table */
++static const struct property_entry ov13b10_endpoint_props[] = {
++	PROPERTY_ENTRY_U32("bus-type", 4),
++	PROPERTY_ENTRY_U32_ARRAY_LEN("data-lanes", ov13b10_data_lanes,
++				     ARRAY_SIZE(ov13b10_data_lanes)),
++	PROPERTY_ENTRY_U64_ARRAY_LEN("link-frequencies", ov13b10_link_freqs,
++				     ARRAY_SIZE(ov13b10_link_freqs)),
++	PROPERTY_ENTRY_REF_ARRAY("remote-endpoint", ov13b10_refs),
++	{ }
++};
++
++/* OV13B10 endpoint node definition */
++static const struct software_node ov13b10_endpoint_node = {
++	.name = "endpoint",
++	.parent = &ov13b10_port_node,
++	.properties = ov13b10_endpoint_props,
++};
++
+ /*
+  * AMD Camera swnode graph uses 10 nodes and also its relationship is
+  * fixed to align with the structure that v4l2 and i2c frameworks expects
+@@ -245,8 +319,17 @@ static const struct amdisp_platform_info ov05c10_platform_config = {
+ 	.swnodes = amd_isp4_nodes,
+ };
+ 
++static const struct amdisp_platform_info ov13b10_platform_config = {
++	.board_info = {
++		.dev_name = "ov13b10",
++		I2C_BOARD_INFO("ov13b10", AMDISP_OV13B10_I2C_ADDR),
++	},
++	.swnodes = amd_isp4_nodes,
++};
++
+ static const struct acpi_device_id amdisp_sensor_ids[] = {
+ 	{ AMDISP_OV05C10_HID, (kernel_ulong_t)&ov05c10_platform_config },
++	{ AMDISP_OV13B10_HID, (kernel_ulong_t)&ov13b10_platform_config },
+ 	{ }
+ };
+ MODULE_DEVICE_TABLE(acpi, amdisp_sensor_ids);
+-- 
+2.54.0
+
