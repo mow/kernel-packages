@@ -113,7 +113,8 @@ jobs:
                         config/ogc.config.set \
                         config/fedora.config.unset \
                         config/ogc.config.unset \
-                        .github/workflows/fedora.yaml
+                        .github/workflows/fedora.yaml \
+                        rearcam-patches/*.patch
                     } | sha256sum | cut -d' ' -f1
                   )
                   SHORT_HASH="${HASH:0:12}"
@@ -188,6 +189,10 @@ jobs:
                   tar -xf linux-${TAR_KVER}.tar.xz
                   cd linux-${TAR_KVER}
                   patch -Np1 < ../monolithic.patch
+                  for p in ../rearcam-patches/*.patch; do
+                    echo "Applying rearcam patch: $p"
+                    patch -Np1 < "$p"
+                  done
 
             - name: Merge kernel configuration files
               if: steps.check-existing.outputs.exists != 'true'

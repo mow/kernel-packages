@@ -1,0 +1,43 @@
+From 06ca831b0274992dbfbe1541a9683ab56c522880 Mon Sep 17 00:00:00 2001
+From: Rearcam Build <rearcam@local>
+Date: Tue, 19 May 2026 03:53:50 +0000
+Subject: [PATCH 09/10] media: amd: isp4: backport kmalloc_obj usage for 6.19
+
+---
+ drivers/media/platform/amd/isp4/isp4_interface.c | 6 +++---
+ 1 file changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/media/platform/amd/isp4/isp4_interface.c b/drivers/media/platform/amd/isp4/isp4_interface.c
+index 15f14eddd..ed0d153c4 100644
+--- a/drivers/media/platform/amd/isp4/isp4_interface.c
++++ b/drivers/media/platform/amd/isp4/isp4_interface.c
+@@ -127,7 +127,7 @@ isp4if_gpu_mem_alloc(struct isp4_interface *ispif, u32 mem_size)
+ 	struct device *dev = ispif->dev;
+ 	int ret;
+ 
+-	mem_info = kmalloc_obj(*mem_info, GFP_KERNEL);
++	mem_info = kmalloc(sizeof(*mem_info), GFP_KERNEL);
+ 	if (!mem_info)
+ 		return NULL;
+ 
+@@ -370,7 +370,7 @@ static int isp4if_send_fw_cmd(struct isp4_interface *ispif, u32 cmd_id,
+ 
+ 	/* Allocate the sync command object early and outside of the lock */
+ 	if (sync) {
+-		ele = kmalloc_obj(*ele, GFP_KERNEL);
++		ele = kmalloc(sizeof(*ele), GFP_KERNEL);
+ 		if (!ele)
+ 			return -ENOMEM;
+ 
+@@ -746,7 +746,7 @@ isp4if_alloc_buffer_node(struct isp4if_img_buf_info *buf_info)
+ {
+ 	struct isp4if_img_buf_node *node;
+ 
+-	node = kmalloc_obj(*node, GFP_KERNEL);
++	node = kmalloc(sizeof(*node), GFP_KERNEL);
+ 	if (node)
+ 		node->buf_info = *buf_info;
+ 
+-- 
+2.54.0
+
