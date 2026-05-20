@@ -194,6 +194,13 @@ jobs:
                     patch -Np1 < "$p"
                   done
 
+                  # rpmbuild does not use this already-patched working tree.
+                  # It unpacks linux-${TAR_KVER}.tar.xz again and applies SOURCES/monolithic.patch.
+                  # Therefore replace monolithic.patch with a sequential combined patch.
+                  cd ..
+                  cat monolithic.patch rearcam-patches/*.patch > monolithic.rearcam.patch
+                  mv monolithic.rearcam.patch monolithic.patch
+
             - name: Merge kernel configuration files
               if: steps.check-existing.outputs.exists != 'true'
               uses: OpenGamingCollective/kernel-configurator@5b4abc58a2edf89941180dbbe33b26415db23b0b # v1.0.1
