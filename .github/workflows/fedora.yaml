@@ -194,10 +194,6 @@ jobs:
                     patch -Np1 < "$p"
                   done
 
-                  cd ..
-                  cat monolithic.patch rearcam-patches/*.patch > monolithic.rearcam.patch
-                  mv monolithic.rearcam.patch monolithic.patch
-
                   # rpmbuild does not use this already-patched working tree.
                   # It unpacks linux-${TAR_KVER}.tar.xz again and applies SOURCES/monolithic.patch.
                   # Therefore replace monolithic.patch with a sequential combined patch.
