@@ -1,0 +1,68 @@
+From: Rearcam Build <rearcam@local>
+Date: Thu, 21 May 2026 00:00:00 +0000
+Subject: [PATCH] amdgpu/isp_v4_1_1: bind OV13B10 XSHUTDN as "reset" active-low
+
+Patch 0008 added isp_ov13b10_gpio_table by copy-pasting the OV05C10
+entry verbatim: con_id="enable" with GPIO_ACTIVE_HIGH. The in-tree
+OV13B10 sensor driver (drivers/media/i2c/ov13b10.c) requests its
+shutdown line via devm_gpiod_get_optional(dev, "reset", GPIOD_OUT_LOW)
+and toggles it as gpiod_set_value(reset, 1)=asserted /
+gpiod_set_value(reset, 0)=released. The "enable" con_id therefore
+never matched, gpiod_get_optional returned NULL, and the sensor was
+left at the default boot state of the amdisp-pinctrl pin throughout
+power_on / power_off.
+
+The physical OV13B10 XSHUTDN pin is active low (pin LOW = sensor in
+reset/power-down per the OV13B10 datasheet), so the lookup must also
+be flagged GPIO_ACTIVE_LOW for the logical levels in ov13b10.c to map
+to the correct register writes through pinctrl-amdisp.
+
+Evidence:
+  drivers/media/i2c/ov13b10.c:1478  devm_gpiod_get_optional(..,"reset",GPIOD_OUT_LOW)
+  drivers/media/i2c/ov13b10.c:1196  gpiod_set_value_cansleep(reset, 1) // power_off
+  drivers/media/i2c/ov13b10.c:1227  gpiod_set_value_cansleep(reset, 0) // power_on
+  drivers/pinctrl/pinctrl-amdisp.c  raw register write: bit set = pin high
+  OV13B10 datasheet                 XSHUTDN active low
+  drivers/pinctrl/pinctrl-amdisp.h  pin 0 = "sensor0 control"
+
+No ACPI _CRS is present on the OMNI13B1 device (gz302-camera-acpi/dsl/
+SSDT23.dsl shows CAMB with _HID/_DDN/_SUB/_UID/_PLD/_STA/_DSM only,
+no ResourceTemplate), and the Windows sensorOV13B.sys / amdcamera.sys
+bundle carries no GPIO strings (strings scan clean), so this is the
+only ground-truthed GPIO binding available to the sensor.
+
+Signed-off-by: Rearcam Build <rearcam@local>
+---
+--- a/drivers/gpu/drm/amd/amdgpu/isp_v4_1_1.c
++++ b/drivers/gpu/drm/amd/amdgpu/isp_v4_1_1.c
+@@ -65,10 +65,29 @@
+ 	}
+ };
+ 
++/*
++ * OV13B10 (ACPI HID OMNI13B1) XSHUTDN line.
++ *
++ * The in-tree drivers/media/i2c/ov13b10.c sensor driver requests its
++ * shutdown line via devm_gpiod_get_optional(dev, "reset", GPIOD_OUT_LOW)
++ * and drives it logical-1 to assert reset / logical-0 to release. The
++ * physical OV13B10 XSHUTDN pin is active-low (pin LOW = sensor in
++ * reset/power-down per the OV13B10 datasheet), so the lookup must
++ * provide con_id="reset" with GPIO_ACTIVE_LOW. The previous
++ * con_id="enable" with GPIO_ACTIVE_HIGH (carried over from OV05C10)
++ * never matched ov13b10's gpiod_get and silently disabled reset
++ * sequencing.
++ *
++ * Pin 0 on the ISP-internal "amdisp-pinctrl" gpiochip is the sensor0
++ * control line exposed through the ISP register window
++ * (ISP411_GPIO_SENSOR_OFFSET); there is no SoC GPIO involved and no
++ * _CRS in the OMNI13B1 ACPI node, so this is the only ground-truthed
++ * GPIO available to the sensor.
++ */
+ static struct gpiod_lookup_table isp_ov13b10_gpio_table = {
+ 	.dev_id = "i2c-ov13b10",
+ 	.table = {
+-		GPIO_LOOKUP("amdisp-pinctrl", 0, "enable", GPIO_ACTIVE_HIGH),
++		GPIO_LOOKUP("amdisp-pinctrl", 0, "reset", GPIO_ACTIVE_LOW),
+ 		{ }
+ 	}
+ };
