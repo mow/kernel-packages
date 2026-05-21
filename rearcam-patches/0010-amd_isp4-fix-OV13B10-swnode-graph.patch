@@ -1,0 +1,193 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Rearcam Build <rearcam@local>
+Date: Thu, 21 May 2026 00:00:00 +0000
+Subject: [PATCH] platform/x86/amd: amd_isp4: fix OV13B10 swnode graph wiring
+
+Patch 0008 added OV13B10 sensor nodes but kept them out of
+amd_isp4_nodes[] and shared isp4_refs[]/isp4_mipi1_endpoint_node between
+both sensors, while prepare_amdisp_platform() still indexed swnodes[6]
+hard-coded to ov05c10_camera_node.
+
+Consequences when ACPI HID OMNI13B1 matches:
+ * software_node_register_node_group() registers only OV05C10 sensor
+   nodes; OV13B10 swnodes never enter the fwnode graph.
+ * The ov13b10 i2c_client receives swnode = &ov05c10_camera_node, so
+   clock-frequency reads back as 24 MHz; the ov13b10 driver rejects with
+   -EINVAL (drivers/media/i2c/ov13b10.c: if (freq != OV13B10_EXT_CLK)).
+ * ISP MIPI remote-endpoint carries two refs; v4l2_fwnode parses
+   remote-endpoint as a single reference.
+ * No working sensor subdev -> no streaming and the media graph the
+   capture driver expects is incomplete.
+
+Split the swnode arrays so each sensor owns its own MIPI endpoint with a
+single remote-endpoint reference, and let each platform_config point at
+the matching array. Carry the sensor camera-node array index in
+amdisp_platform_info so prepare_amdisp_platform() picks the right node.
+
+Signed-off-by: Rearcam Build <rearcam@local>
+---
+--- a/drivers/platform/x86/amd/amd_isp4.c
++++ b/drivers/platform/x86/amd/amd_isp4.c
+@@ -24,7 +24,8 @@
+ #define AMDISP_OV13B10_REMOTE_EP_NAME	"ov13b10_isp_4_1_1"
+ #define AMD_ISP_PLAT_DRV_NAME		"amd-isp4"
+ 
+-static const struct software_node isp4_mipi1_endpoint_node;
++static const struct software_node isp4_mipi1_ov05c10_endpoint_node;
++static const struct software_node isp4_mipi1_ov13b10_endpoint_node;
+ static const struct software_node ov05c10_endpoint_node;
+ static const struct software_node ov13b10_endpoint_node;
+ 
+@@ -36,6 +37,7 @@
+ struct amdisp_platform_info {
+ 	struct i2c_board_info board_info;
+ 	const struct software_node **swnodes;
++	unsigned int sensor_node_idx;
+ };
+ 
+ /*
+@@ -84,25 +86,39 @@
+ };
+ 
+ /*
+- * ISP4 MIPI1 remote endpoint points to OV05C10 endpoint
+- * node.
++ * V4L2 fwnode parsing of "remote-endpoint" expects a single reference,
++ * and each platform_config registers exactly one sensor at a time, so
++ * provide one MIPI endpoint node per supported sensor and let each
++ * sensor's platform_config point at the matching endpoint.
+  */
+-static const struct software_node_ref_args isp4_refs[] = {
++static const struct software_node_ref_args isp4_ov05c10_refs[] = {
+ 	SOFTWARE_NODE_REFERENCE(&ov05c10_endpoint_node),
++};
++
++static const struct software_node_ref_args isp4_ov13b10_refs[] = {
+ 	SOFTWARE_NODE_REFERENCE(&ov13b10_endpoint_node),
+ };
+ 
+-/* ISP4 MIPI1 endpoint node properties table */
+-static const struct property_entry isp4_mipi1_endpoint_props[] = {
+-	PROPERTY_ENTRY_REF_ARRAY("remote-endpoint", isp4_refs),
++static const struct property_entry isp4_mipi1_ov05c10_endpoint_props[] = {
++	PROPERTY_ENTRY_REF_ARRAY("remote-endpoint", isp4_ov05c10_refs),
++	{ }
++};
++
++static const struct property_entry isp4_mipi1_ov13b10_endpoint_props[] = {
++	PROPERTY_ENTRY_REF_ARRAY("remote-endpoint", isp4_ov13b10_refs),
+ 	{ }
+ };
+ 
+-/* ISP4 MIPI1 endpoint node definition */
+-static const struct software_node isp4_mipi1_endpoint_node = {
++static const struct software_node isp4_mipi1_ov05c10_endpoint_node = {
++	.name = "endpoint",
++	.parent = &isp4_port_node,
++	.properties = isp4_mipi1_ov05c10_endpoint_props,
++};
++
++static const struct software_node isp4_mipi1_ov13b10_endpoint_node = {
+ 	.name = "endpoint",
+ 	.parent = &isp4_port_node,
+-	.properties = isp4_mipi1_endpoint_props,
++	.properties = isp4_mipi1_ov13b10_endpoint_props,
+ };
+ 
+ /* I2C1 SWNODE */
+@@ -151,11 +167,11 @@
+ };
+ 
+ /*
+- * OV05C10 remote endpoint points to ISP4 MIPI1 endpoint
+- * node.
++ * OV05C10 remote endpoint points to the OV05C10-specific ISP4 MIPI1
++ * endpoint node.
+  */
+ static const struct software_node_ref_args ov05c10_refs[] = {
+-	SOFTWARE_NODE_REFERENCE(&isp4_mipi1_endpoint_node),
++	SOFTWARE_NODE_REFERENCE(&isp4_mipi1_ov05c10_endpoint_node),
+ };
+ 
+ /* OV05C10 supports one single link frequency */
+@@ -218,11 +234,11 @@
+ };
+ 
+ /*
+- * OV13B10 remote endpoint points to ISP4 MIPI1 endpoint
+- * node.
++ * OV13B10 remote endpoint points to the OV13B10-specific ISP4 MIPI1
++ * endpoint node.
+  */
+ static const struct software_node_ref_args ov13b10_refs[] = {
+-	SOFTWARE_NODE_REFERENCE(&isp4_mipi1_endpoint_node),
++	SOFTWARE_NODE_REFERENCE(&isp4_mipi1_ov13b10_endpoint_node),
+ };
+ 
+ /* OV13B10 supports one single link frequency */
+@@ -296,12 +312,12 @@
+  * };
+  *
+  */
+-static const struct software_node *amd_isp4_nodes[] = {
++static const struct software_node *amd_isp4_ov05c10_nodes[] = {
+ 	&amd_camera_node,
+ 	&isp4_node,
+ 	&isp4_ports,
+ 	&isp4_port_node,
+-	&isp4_mipi1_endpoint_node,
++	&isp4_mipi1_ov05c10_endpoint_node,
+ 	&i2c1_node,
+ 	&ov05c10_camera_node,
+ 	&ov05c10_ports,
+@@ -310,13 +326,28 @@
+ 	NULL
+ };
+ 
++static const struct software_node *amd_isp4_ov13b10_nodes[] = {
++	&amd_camera_node,
++	&isp4_node,
++	&isp4_ports,
++	&isp4_port_node,
++	&isp4_mipi1_ov13b10_endpoint_node,
++	&i2c1_node,
++	&ov13b10_camera_node,
++	&ov13b10_ports,
++	&ov13b10_port_node,
++	&ov13b10_endpoint_node,
++	NULL
++};
++
+ /* OV05C10 specific AMD ISP platform configuration */
+ static const struct amdisp_platform_info ov05c10_platform_config = {
+ 	.board_info = {
+ 		.dev_name = "ov05c10",
+ 		I2C_BOARD_INFO("ov05c10", AMDISP_OV05C10_I2C_ADDR),
+ 	},
+-	.swnodes = amd_isp4_nodes,
++	.swnodes = amd_isp4_ov05c10_nodes,
++	.sensor_node_idx = 6,
+ };
+ 
+ static const struct amdisp_platform_info ov13b10_platform_config = {
+@@ -324,7 +355,8 @@
+ 		.dev_name = "ov13b10",
+ 		I2C_BOARD_INFO("ov13b10", AMDISP_OV13B10_I2C_ADDR),
+ 	},
+-	.swnodes = amd_isp4_nodes,
++	.swnodes = amd_isp4_ov13b10_nodes,
++	.sensor_node_idx = 6,
+ };
+ 
+ static const struct acpi_device_id amdisp_sensor_ids[] = {
+@@ -417,8 +449,8 @@
+ 	if (ret)
+ 		return ERR_PTR(ret);
+ 
+-	/* initialize ov05c10_camera_node */
+-	isp4_platform->board_info.swnode = src->swnodes[6];
++	/* attach the sensor's camera swnode to the i2c_board_info */
++	isp4_platform->board_info.swnode = src->swnodes[src->sensor_node_idx];
+ 
+ 	return isp4_platform;
+ }
